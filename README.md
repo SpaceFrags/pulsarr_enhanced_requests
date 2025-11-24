@@ -65,15 +65,15 @@ HACS (Home Assistant Community Store) makes installation and updates simple. Sin
 
 The configuration is handled entirely through the Home Assistant UI, requiring your Pulsarr connection details.
 
-### Part 1: Home Assistant Setup
+### Home Assistant Setup
 
 1.  In Home Assistant, navigate to **Settings** > **Devices & Services**.
 2.  Click the **+ ADD INTEGRATION** button.
 3.  Search for **"Pulsarr Enhanced Requests"**.
 4.  You will be prompted to enter the following mandatory details:
     * **Host:** The IP address or hostname of your Pulsarr instance (e.g., `192.168.1.10` or `pulsarr.local`).
-    * **Port:** The port Pulsarr is running on (default is `7000`).
-    * **API Key:** Your Pulsarr API key. **This is required.**
+    * **Port:** The port Pulsarr is running on (default is `3003`).
+    * **API Key:** Your Pulsarr API key.
 5.  Click **SUBMIT**. If successful, a new device and one sensor will be created under the name you provided.
 
 ### Sensor Entity
