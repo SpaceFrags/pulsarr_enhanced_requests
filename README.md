@@ -16,14 +16,7 @@ This integration is built for efficiency, aggregating detailed information from 
 * **Enhanced Metadata:** Automatically performs secondary API calls to Pulsarr to fetch rich TMDB metadata (poster, backdrop, ratings, etc.) for each requested item. This makes your dashboard card visually informative and provides context for quick decision-making.
 * **Actionable Service:** Provides a native Home Assistant service (`pulsarr_enhanced_requests.process_request`) to approve or reject requests with a single button click, instantly updating Pulsarr.
 
-This integration is specifically designed to work with the official-unofficial Home Assistant custom card: **Pulsarr Requests Card**.
-
-<p align="center">
-  <a href="https://github.com/SpaceFrags/pulsarr_requests_card">
-    <img src="https://img.shields.io/badge/Lovelace%20Card-Required-blueviolet?style=for-the-badge&logo=home-assistant" alt="Lovelace Card Required" />
-  </a>
-</p>
-
+This integration is specifically designed to work with the official-unofficial Home Assistant custom card: [**Pulsarr Requests Card**](https://github.com/SpaceFrags/pulsarr_requests_card).
 
 
 ***
