@@ -1,0 +1,12 @@
+{
+  "domain": "pulsarr_enhanced_requests",
+  "name": "Pulsarr",
+  "codeowners": ["@SpaceFrags"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/SpaceFrags/pulsarr_enhanced_requests",
+  "issue_tracker": "https://github.com/SpaceFrags/pulsarr_enhanced_requests/issues",
+  "requirements": ["aiohttp"],
+  "iot_class": "cloud_polling",
+  "version": "1.0.0"
+}
