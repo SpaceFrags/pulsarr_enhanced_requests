@@ -11,17 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# File: custom_components/pulsarr_enhanced_requests/sensor.py
 """Sensor platform for Pulsarr Enhanced Requests."""
 from __future__ import annotations
-
-import json
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from typing import Any
 
 from . import DOMAIN, PulsarrDataUpdateCoordinator
 
@@ -45,18 +43,47 @@ class PulsarrRequestsSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._attr_name = "Pulsarr Enhanced Requests"
         self._attr_unique_id = f"{coordinator.host}-{coordinator.port}-enhanced-requests"
-        self._attr_native_unit_of_measurement = None # Changed to None to remove unit
-        self._attr_icon = "mdi:bell-badge" # You can choose a suitable icon
+        self._attr_native_unit_of_measurement = None
+        self._attr_icon = "mdi:bell-badge"
 
     @property
     def native_value(self) -> int:
         """Return the total number of pending requests."""
+        # The state value comes directly from the coordinator's data
         return self.coordinator.data.get("total_pending", 0)
 
     @property
-    def extra_state_attributes(self) -> dict:
-        """Return the state attributes."""
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the state attributes by simplifying the request details."""
         # The full list of enhanced pending requests
+        requests_details = self.coordinator.data.get("pending_requests_details", [])
+        
+        # We must restructure the list into a simple dictionary structure
+        # for Home Assistant to display correctly as an attribute.
+        simplified_requests = []
+        for req in requests_details:
+            # Safely access the enriched metadata, falling back to an empty dict if missing
+            metadata = req.get('tmdb_metadata', {})
+            
+            # Use sensible fallbacks for all fields to ensure no items are skipped
+            simplified_requests.append({
+                "id": req.get("id"),
+                
+                # CORRECTED LINE: Using 'userName' instead of 'requestedBy'
+                "requested_by": req.get("userName") or "Unknown User",
+                
+                "media_type": metadata.get("media_type") or "unknown",
+                
+                # Prioritize enriched metadata, but fall back to the original request name
+                "title": metadata.get("title") or req.get("name") or req.get("contentTitle") or "Unknown Title", 
+                
+                "poster_path": metadata.get("poster_path"),
+                "overview": metadata.get("overview", "No description available.").split('.')[0] + "...", # Truncate overview for attribute display
+                "release_date": metadata.get("release_date"),
+                "rating": metadata.get("rating"),
+            })
+        
+        # The key name for the attribute should be descriptive
         return {
-            "pending_requests_details": self.coordinator.data.get("pending_requests", [])
+            "pending_requests": simplified_requests
         }

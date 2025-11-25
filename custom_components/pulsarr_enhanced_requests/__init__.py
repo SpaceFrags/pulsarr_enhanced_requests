@@ -11,28 +11,32 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# File: custom_components/pulsarr_enhanced_requests/__init__.py
 from __future__ import annotations # THIS MUST BE THE VERY FIRST EXECUTABLE LINE
 
 """The Pulsarr Enhanced Requests integration."""
 
 import asyncio
 import logging
-from datetime import timedelta
+from typing import Any
+from datetime import timedelta # Import timedelta for specifying the update interval
 import aiohttp
-import voluptuous as vol # Import voluptuous for service schema validation
+import aiohttp.client_exceptions
+import voluptuous as vol
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers import config_validation as cv # Import config_validation for service schema
+from homeassistant.helpers import config_validation as cv
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError # Ensure HomeAssistantError is imported
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "pulsarr_enhanced_requests"
 PLATFORMS = ["sensor"]
+
+# --- NEW: Define the desired update interval (e.g., 5 minutes) ---
+UPDATE_INTERVAL = timedelta(minutes=5)
 
 # Service Definitions
 SERVICE_PROCESS_REQUEST = "process_request"
@@ -51,9 +55,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = PulsarrDataUpdateCoordinator(hass, entry.data["host"], entry.data["port"], entry.data["api_key"])
     
     # Perform initial fetch, raising ConfigEntryNotReady if it fails
-    # This is also where the warnings about async_config_entry_first_refresh originate.
-    # It's a valid pattern for now, but HA is moving away from it for config flow validation.
-    # The integration will still function.
     await coordinator.async_config_entry_first_refresh() 
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -75,126 +76,126 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_PROCESS_REQUEST)
     return unload_ok
 
-# Moved PulsarrDataUpdateCoordinator definition above _register_services
 class PulsarrDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the Pulsarr API."""
 
-    def __init__(self, hass: HomeAssistant, host: str, port: str, api_key: str):
+    def __init__(self, hass: HomeAssistant, host: str, port: int, api_key: str): 
         """Initialize."""
         self.host = host
         self.port = port
         self.api_key = api_key
-        # Base URL is now /v1 based on updated Pulsarr API documentation
-        self.base_url = f"http://{host}:{port}/v1" 
-        
-        # New debug log to check the API key value
-        _LOGGER.debug("Initializing coordinator. API key received: '%s'", self.api_key)
+        # Base URL is just the scheme/host/port
+        self.base_url = f"http://{host}:{port}" 
         
         # Conditionally set headers based on API key presence
         self.headers = {"Content-Type": "application/json"}
-        if self.api_key: # Only add X-Api-Key if it's not an empty string
+        if self.api_key:
             self.headers["X-Api-Key"] = self.api_key
-            _LOGGER.debug("API key loaded successfully. Headers will include X-Api-Key.")
-        else:
-            _LOGGER.warning("API key is not configured. API requests may fail.")
-
-        self.hass = hass
-        # Obtain the Home Assistant managed aiohttp ClientSession once
+        
         self.websession = async_get_clientsession(hass)
 
+        # --- FIX APPLIED HERE: Setting the explicit update interval ---
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(minutes=5), # Update every 5 minutes
+            update_interval=UPDATE_INTERVAL, # Use the defined 5 minute interval
         )
 
-    async def _async_update_data(self):
-        """Fetch data from Pulsarr API."""
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Fetch data from Pulsarr API. This is called automatically by the coordinator."""
+        _LOGGER.debug("Starting Pulsarr data update...")
         try:
-            # 1. Fetch all approval requests
-            # Endpoint path is /approval/requests as per updated documentation
-            approval_requests_url = f"{self.base_url}/approval/requests" 
-            _LOGGER.debug("Fetching approval requests from: %s with headers: %s", approval_requests_url, self.headers) # Added headers to debug log
-            # Use self.websession directly, no 'async with' here as it's managed by HA
-            async with self.websession.get(approval_requests_url, headers=self.headers) as response:
+            # Step 1: Get all pending requests
+            requests_url = f"{self.base_url}/v1/approval/requests?status=pending"
+            async with self.websession.get(requests_url, headers=self.headers) as response:
                 response.raise_for_status()
-                all_requests = await response.json()
+                full_response = await response.json()
+                
+                # Extract the 'approvalRequests' array
+                pending_requests = full_response.get("approvalRequests", [])
+            
+            # Step 2: Enrich each request with TMDB/TMDb metadata
+            enhanced_requests = []
+            valid_requests = [r for r in pending_requests if isinstance(r, dict)]
+            
+            tasks = [self._async_fetch_tmdb_metadata(request) for request in valid_requests]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            if not all_requests or "approvalRequests" not in all_requests:
-                _LOGGER.warning("Pulsarr API did not return expected 'approvalRequests' data.")
-                # Return empty data, but don't raise UpdateFailed unless it's a critical error
-                return {"pending_requests": [], "total_pending": 0}
+            for result in results:
+                if isinstance(result, Exception):
+                    _LOGGER.warning("Failed to fetch TMDB data for one item: %s", result)
+                    continue 
+                
+                if result:
+                    enhanced_requests.append(result)
 
-            pending_requests = [
-                req for req in all_requests["approvalRequests"] if req.get("status") == "pending"
-            ]
-
-            enhanced_pending_requests = []
-            for req in pending_requests:
-                request_details = {
-                    "id": req.get("id"),
-                    "userName": req.get("userName"),
-                    "contentType": req.get("contentType"),
-                    "contentTitle": req.get("contentTitle"),
-                    "contentGuids": req.get("contentGuids", []),
-                    "tmdb_metadata": {} # Placeholder for TMDB metadata
-                }
-
-                # 2. Fetch TMDB metadata for each contentGuid
-                for guid in request_details["contentGuids"]:
-                    if guid.startswith("tmdb:"):
-                        # Pulsarr's /tmdb/metadata/:id endpoint expects the full GUID (e.g., tmdb:400650)
-                        tmdb_metadata_url = f"{self.base_url}/tmdb/metadata/{guid}" 
-                        _LOGGER.debug("Fetching TMDB metadata for GUID %s from: %s", guid, tmdb_metadata_url)
-                        # Use self.websession directly, no 'async with' here as it's managed by HA
-                        async with self.websession.get(tmdb_metadata_url, headers=self.headers) as tmdb_response:
-                            if tmdb_response.status == 200:
-                                tmdb_data = await tmdb_response.json()
-                                # THIS IS THE KEY DEBUG LOG:
-                                _LOGGER.debug("Successfully fetched TMDB metadata for GUID %s. Response: %s", guid, tmdb_data)
-                                
-                                # Access nested fields based on the provided JSON structure
-                                metadata_details = tmdb_data.get("metadata", {}).get("details", {})
-                                radarr_ratings = tmdb_data.get("radarrRatings", {})
-
-                                request_details["tmdb_metadata"][guid] = {
-                                    "poster_path": metadata_details.get("poster_path"),
-                                    "backdrop_path": metadata_details.get("backdrop_path"),
-                                    # Correctly access the 'value' from nested rating objects
-                                    "tmdb_ratings": radarr_ratings.get("tmdb", {}).get("value"),
-                                    "imdb_ratings": radarr_ratings.get("imdb", {}).get("value"),
-                                    "rottenTomatoes_ratings": radarr_ratings.get("rottenTomatoes", {}).get("value")
-                                }
-                            else:
-                                _LOGGER.warning(
-                                    "Failed to fetch TMDB metadata for GUID %s. Status: %s. Response: %s",
-                                    guid, tmdb_response.status, await tmdb_response.text() # Log full response for debugging
-                                )
-                                request_details["tmdb_metadata"][guid] = {"error": f"Status {tmdb_response.status}"}
-                    # Add logic for other GUID types if needed (e.g., tvdb)
-                enhanced_pending_requests.append(request_details)
-
-            _LOGGER.debug("Fetched %d pending requests with enhanced details.", len(enhanced_pending_requests))
+            _LOGGER.debug("Successfully fetched and enhanced %d pending requests.", len(enhanced_requests))
+            
+            # Return the aggregated data
             return {
-                "pending_requests": enhanced_pending_requests,
-                "total_pending": len(enhanced_pending_requests)
+                "total_pending": len(enhanced_requests),
+                "pending_requests_details": enhanced_requests,
             }
 
-        except aiohttp.ClientError as err:
-            # Raise ConfigEntryNotReady during initial setup if API is unreachable
-            if self.data is None: # Check if this is the first data fetch
-                raise ConfigEntryNotReady(f"Pulsarr API is unreachable during setup: {err}") from err
-            raise UpdateFailed(f"Error communicating with Pulsarr API: {err}") from err
-        except asyncio.TimeoutError as err:
+        except aiohttp.ClientConnectorError as err:
             if self.data is None:
-                raise ConfigEntryNotReady(f"Timeout while communicating with Pulsarr API during setup: {err}") from err
-            raise UpdateFailed(f"Timeout while communicating with Pulsarr API: {err}") from err
+                raise ConfigEntryNotReady(f"Connection to Pulsarr failed during setup: {err}") from err
+            raise UpdateFailed(f"Connection to Pulsarr failed: {err}") from err
+        except aiohttp.ClientResponseError as err:
+            if err.status in (401, 403):
+                raise UpdateFailed("Invalid API Key or forbidden access.") from err
+            raise UpdateFailed(f"Pulsarr API returned error: {err.message}") from err
+        except UpdateFailed:
+            raise
         except Exception as err:
-            _LOGGER.exception("Unexpected error fetching Pulsarr data.")
+            _LOGGER.exception("Unexpected error during Pulsarr data update")
             if self.data is None:
                 raise ConfigEntryNotReady(f"Unexpected error during Pulsarr setup: {err}") from err
-            raise UpdateFailed(f"Unexpected error: {err}") from err
+            raise UpdateFailed(f"Unknown error during Pulsarr update: {err}") from err
+
+    async def _async_fetch_tmdb_metadata(self, request: dict) -> dict | None:
+        """Fetches TMDB/TMDb metadata for a single request item."""
+        
+        selected_guid = next((g for g in request.get('contentGuids', []) if g.startswith('tmdb:') or g.startswith('tvdb:')), None)
+        
+        if not selected_guid:
+            return request 
+
+        metadata_url = f"{self.base_url}/v1/tmdb/metadata/{selected_guid}" 
+        media_type = 'movie' if selected_guid.startswith('tmdb:') else 'series'
+
+        try:
+            # Setting a short timeout for metadata fetch
+            async with self.websession.get(metadata_url, headers=self.headers, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                response.raise_for_status()
+                
+                metadata_response = await response.json()
+                
+                # Drill down to the actual details object
+                metadata = metadata_response.get('metadata', {}).get('details', {})
+                
+                if not metadata:
+                    return request
+
+                # Combine original request data with fetched metadata
+                request["tmdb_metadata"] = {
+                    "title": metadata.get('title') or metadata.get('name'),
+                    "poster_path": metadata.get('poster_path'),
+                    "backdrop_path": metadata.get('backdrop_path'),
+                    "overview": metadata.get('overview'),
+                    "release_date": metadata.get('release_date') or metadata.get('first_air_date'),
+                    "rating": metadata.get('vote_average'),
+                    "media_type": media_type
+                }
+                
+                return request
+        except aiohttp.ClientError as err:
+            _LOGGER.warning("Failed to fetch rich metadata for ID %s using URL %s. Error: %s", request.get('id'), metadata_url, err)
+            return request
+        except Exception as err:
+            _LOGGER.exception("Unexpected error during TMDB metadata fetch for ID %s.", request.get('id'))
+            return request
 
 @callback
 def _register_services(hass: HomeAssistant, coordinator: PulsarrDataUpdateCoordinator) -> None:
@@ -211,13 +212,15 @@ def _register_services(hass: HomeAssistant, coordinator: PulsarrDataUpdateCoordi
         pulsarr_status = "approved" if action == "approve" else "rejected"
         
         try:
-            request_url = f"{coordinator.base_url}/approval/requests/{request_id}"
+            # Use the correct Pulsarr API path for the request
+            request_url = f"{coordinator.base_url}/v1/approval/requests/{request_id}" 
             payload = {"status": pulsarr_status}
 
-            # Use coordinator.websession directly with PATCH method
-            async with coordinator.websession.patch(request_url, headers=coordinator.headers, json=payload) as response:
+            # Use coordinator.websession directly with PATCH method, setting timeout
+            async with coordinator.websession.patch(request_url, headers=coordinator.headers, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
                 _LOGGER.info("Successfully processed request %s with action %s. Response: %s", request_id, action, await response.text())
+                
                 # After successful action, force an update of the sensor data
                 await coordinator.async_request_refresh()
         except aiohttp.ClientError as err:

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# File: custom_components/pulsarr_enhanced_requests/config_flow.py
 """Config flow for Pulsarr Enhanced Requests integration."""
 import logging
 
@@ -20,19 +19,55 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import HomeAssistantError, ConfigEntryNotReady 
+from homeassistant.exceptions import HomeAssistantError, ConfigEntryNotReady
 
-from . import DOMAIN, PulsarrDataUpdateCoordinator 
+from . import DOMAIN, PulsarrDataUpdateCoordinator # Import DOMAIN and Coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 # Define schema for user input
-# FIX 1: API Key is now REQUIRED as requested.
 DATA_SCHEMA = vol.Schema({
     vol.Required("host"): str,
-    vol.Required("port", default=7000): int, 
-    vol.Required("api_key"): str, 
+    vol.Required("port", default=3003): int, # Default Pulsarr port
+    vol.Required("api_key"): str, # FIXED: API key is now marked as Required
 })
+
+async def validate_input(hass: HomeAssistant, data: dict) -> dict:
+    """Validate the user input allows us to connect.
+    
+    Data has the keys from DATA_SCHEMA with values provided by the user.
+    """
+    host = data["host"]
+    port = data["port"]
+    api_key = data["api_key"] # Access key directly, it's guaranteed to exist by the schema
+
+    # Pass individual arguments to the coordinator constructor
+    try:
+        coordinator = PulsarrDataUpdateCoordinator(hass, host, port, api_key)
+        
+        # Call the update function directly for validation (previous fix)
+        await coordinator._async_update_data()
+        
+    except ConfigEntryNotReady as err:
+        if "unreachable" in str(err).lower() or "timeout" in str(err).lower():
+            raise CannotConnect from err
+        
+        # The key is required, so an empty key is handled here if the user somehow bypassed the form validation,
+        # or if the entered key is simply invalid.
+        if api_key == "" and ("unauthorized" in str(err).lower() or "forbidden" in str(err).lower()):
+            _LOGGER.warning("Pulsarr returned unauthorized/forbidden with empty API key.")
+            raise CannotConnect("API key cannot be empty. Authentication is enabled on Pulsarr.") from err
+        if "unauthorized" in str(err).lower() or "forbidden" in str(err).lower():
+            raise InvalidAuth from err
+            
+        raise HomeAssistantError(f"Unexpected error during validation: {err}") from err
+    except Exception as err:
+        _LOGGER.exception("Unexpected error during validation of Pulsarr connection")
+        raise HomeAssistantError(f"Unknown error during validation: {err}") from err
+
+    # Return info that will be used as the title of the integration entry
+    return {"title": f"Pulsarr ({host}:{port})"}
+
 
 class PulsarrConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Pulsarr Enhanced Requests."""
@@ -43,54 +78,27 @@ class PulsarrConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors = {}
         if user_input is not None:
-            host = user_input["host"]
-            port = user_input["port"]
-            api_key = user_input["api_key"]
-
-            # Validate input by trying to connect to Pulsarr
-            try:
-                info = await self._async_validate_input(host, port, api_key)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except Exception: # Catch any other unexpected errors during validation
-                _LOGGER.exception("Unexpected exception during config flow validation")
-                errors["base"] = "unknown"
+            # Explicitly check for an empty string input for API key, even though 'Required' is set
+            if not user_input.get("api_key"):
+                 # This sets a field-level error if the API key is empty
+                 errors["api_key"] = "required" 
             else:
-                # If validation is successful, create the config entry
-                return self.async_create_entry(title=info["title"], data=user_input)
+                try:
+                    # The validation function handles the coordinator instantiation using the explicit arguments
+                    info = await validate_input(self.hass, user_input)
 
-        # FIX 2: We use the simple DATA_SCHEMA since the API key is now required.
+                    return self.async_create_entry(title=info["title"], data=user_input)
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                except InvalidAuth:
+                    errors["base"] = "invalid_auth"
+                except Exception: # Catch other exceptions
+                    _LOGGER.exception("Unexpected exception in async_step_user")
+                    errors["base"] = "unknown"
+
         return self.async_show_form(
             step_id="user", data_schema=DATA_SCHEMA, errors=errors
         )
-
-    async def _async_validate_input(self, host: str, port: int, api_key: str) -> dict:
-        """Validate the user input allows us to connect to Pulsarr."""
-        coordinator = PulsarrDataUpdateCoordinator(self.hass, host, port, api_key)
-        
-        try:
-            # FIX 3: Call the internal data update method directly instead of the 
-            # lifecycle method 'async_config_entry_first_refresh', which caused the error.
-            await coordinator._async_update_data() 
-            
-        except ConfigEntryNotReady as err:
-            if "unreachable" in str(err).lower() or "timeout" in str(err).lower():
-                raise CannotConnect from err
-            if "unauthorized" in str(err).lower() or "forbidden" in str(err).lower():
-                raise InvalidAuth from err
-            raise HomeAssistantError(f"Unexpected error during validation: {err}") from err
-        except Exception as err:
-            _LOGGER.exception("Unexpected error during validation of Pulsarr connection")
-            # If the error is the specific ConfigEntryError we saw, re-raise it properly
-            if "config entry" in str(err).lower():
-                # We can remove this block now, as the fix above should prevent the error
-                _LOGGER.warning("ConfigEntryError detected during validation, ignoring as it's likely due to HA versioning.")
-            raise HomeAssistantError(f"Unknown error during validation: {err}") from err
-
-        # Return info that will be used as the title of the integration entry
-        return {"title": f"Pulsarr ({host}:{port})"}
 
 
 class CannotConnect(HomeAssistantError):
