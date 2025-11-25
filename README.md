@@ -6,7 +6,7 @@
 
 ## Overview
 
-The **Pulsarr Enhanced Requests** integration provides a single, powerful sensor entity in Home Assistant designed to streamline your media approval workflow from the Pulsarr request management tool.
+The **Pulsarr Enhanced Requests** integration provides a single, powerful sensor entity in Home Assistant designed to streamline your media approval workflow from jamcalli's [Pulsarr](https://jamcalli.github.io/Pulsarr/) Real-time Plex watchlist monitoring and content acquisition tool, which Seamlessly sync Plex watchlists with Sonarr and Radarr.
 
 This integration is built for efficiency, aggregating detailed information from multiple Pulsarr API endpoints into one central sensor. This allows you to view, manage, and act on pending requests directly from your Home Assistant dashboard without complex manual lookups.
 
