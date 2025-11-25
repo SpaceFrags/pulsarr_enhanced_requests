@@ -18,6 +18,7 @@ This integration is built for efficiency, aggregating detailed information from 
 
 This integration is specifically designed to work with the official-unofficial Home Assistant custom card: [**Pulsarr Requests Card**](https://github.com/SpaceFrags/pulsarr-requests-card).
 
+<img width="517" height="564" alt="image" src="https://github.com/user-attachments/assets/294aedbc-7814-4b3a-94fa-6c8b68322326" />
 
 ***
 
