@@ -8,5 +8,5 @@
   "issue_tracker": "https://github.com/SpaceFrags/pulsarr_enhanced_requests/issues",
   "requirements": ["aiohttp"],
   "iot_class": "cloud_polling",
-  "version": "1.0.0"
+  "version": "1.0.2"
 }
